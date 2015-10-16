@@ -203,6 +203,10 @@ public class KThread {
 
 		currentThread.status = statusFinished;
 
+    if(currentThread.getWaitingThread() != null)
+    {
+      currentThread.getWaitingThread().ready();
+    }
 		sleep();
 	}
 
@@ -283,6 +287,11 @@ public class KThread {
 	public void join() {
 		Lib.debug(dbgThread, "Joining to thread: " + toString());
 
+    KThread masterThread = currentThread;
+    this.waitingThread = currentThread;
+    Machine.interrupt().disable();
+    masterThread.sleep();
+    Machine.interrupt().enable();
 		Lib.assertTrue(this != currentThread);
 
 	}
@@ -407,16 +416,77 @@ public class KThread {
 		private int which;
 	}
 
+  public KThread getWaitingThread()
+  {
+    return waitingThread;
+  }
+
 	/**
 	 * Tests whether this module is working.
 	 */
-	public static void selfTest() {
+/*	public static void selfTest() {
 		Lib.debug(dbgThread, "Enter KThread.selfTest");
 
 		new KThread(new PingTest(1)).setName("forked thread").fork();
 		new PingTest(0).run();
+    KThread t1 = new KThread( new Runnable () {
+      public void run() {
+        for (int i = 0; i < 5; i++) {
+          System.out.println("i = " + i);
+        }
+      }
+    });
+    t1.setName("Thread 1");
+    t1.fork();
+    t1.join();
+    System.out.println("Reached part of code after t1.join(). t1 should be finshed at this point.");
+    System.out.println("t1 finished? " + (t1.status == statusFinished));
+    Lib.assertTrue((t1.status == statusFinished), " Expected t1 to be finished.");
 	}
+*/
 
+public static void selfTest()
+{
+    joinTestCase2();
+}
+
+private static void joinTestCase2()
+{
+      final KThread thread0 = new KThread( new JoinTest() );
+          thread0.setName("0");
+
+              final KThread thread1 = new KThread( new JoinTest(thread0) );
+                  thread1.setName("1");
+
+                      final KThread thread2 = new KThread( new JoinTest(thread1) );
+                          thread2.setName("2");
+
+                              thread0.fork();
+                                  thread1.fork();
+                                      thread2.fork();
+                                          thread2.join();
+}
+
+private static class JoinTest implements Runnable
+{
+    private final KThread thread; //thread to join on
+
+      public JoinTest() { this.thread = null; }
+        public JoinTest( KThread thread ) { this.thread = thread; }
+
+          @Override
+                  public void run() 
+                    {
+                          if ( thread != null )
+                                            thread.join();
+
+                                                         for (int i = 0; i < 5; i++)
+                                                                    {
+                                                                                  System.out.println("*** thread " + currentThread.getName() + " looped " + i + " times");
+                                                                                                    currentThread.yield();
+                                                                                                              }
+                                                                                                                      }
+}
 	private static final char dbgThread = 't';
 
 	/**
@@ -465,4 +535,6 @@ public class KThread {
 	private static KThread toBeDestroyed = null;
 
 	private static KThread idleThread = null;
+
+  private KThread waitingThread = null;
 }
