@@ -288,9 +288,12 @@ public class KThread {
 		Lib.debug(dbgThread, "Joining to thread: " + toString());
 
     KThread masterThread = currentThread;
-    this.waitingThread = currentThread;
     Machine.interrupt().disable();
-    masterThread.sleep();
+    if(this.status != this.statusFinished)
+    {
+      this.waitingThread = currentThread;
+      masterThread.sleep();
+    }
     Machine.interrupt().enable();
 		Lib.assertTrue(this != currentThread);
 
