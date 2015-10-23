@@ -31,17 +31,17 @@ public class Communicator {
     listenerCV2 = new Condition2(lock);
 	}
 
-	/**
-	 * Wait for a thread to listen through this communicator, and then transfer
-	 * <i>word</i> to the listener.
-	 * 
-	 * <p>
-	 * Does not return until this thread is paired up with a listening thread.
-	 * Exactly one listener should receive <i>word</i>.
-	 * 
-	 * @param word the integer to transfer.
-	 */
-	public void speak(int word) {
+  /**
+   * Wait for a thread to listen through this communicator, and then transfer
+   * <i>word</i> to the listener.
+   * 
+   * <p>
+   * Does not return until this thread is paired up with a listening thread.
+   * Exactly one listener should receive <i>word</i>.
+   * 
+   * @param word the integer to transfer.
+   */
+  public void speak(int word) {
     lock.acquire();
 
     if(speakers > 0)
@@ -75,15 +75,15 @@ public class Communicator {
       speakerCV.wake();
     }
     lock.release();
-	}
+  }
 
-	/**
-	 * Wait for a thread to speak through this communicator, and then return the
-	 * <i>word</i> that thread passed to <tt>speak()</tt>.
-	 * 
-	 * @return the integer transferred.
-	 */
-	public int listen() {
+  /**
+   * Wait for a thread to speak through this communicator, and then return the
+   * <i>word</i> that thread passed to <tt>speak()</tt>.
+   * 
+   * @return the integer transferred.
+   */
+  public int listen() {
     lock.acquire();
     int returnWord = 0;
     if(listeners > 0)
@@ -120,7 +120,8 @@ public class Communicator {
     }
     lock.release();
     return returnWord;
-	}
+  }
+
   public static void selfTest(){
     final Communicator com = new Communicator();
     final long times[] = new long[4];
@@ -141,15 +142,15 @@ public class Communicator {
     speaker2.setName("S2");
     KThread listener1 = new KThread( new Runnable () {
         public void run() {
-            words[0] = com.listen();
             times[2] = Machine.timer().getTime();
+            words[0] = com.listen();
         }
     });
     listener1.setName("L1");
     KThread listener2 = new KThread( new Runnable () {
         public void run() {
-            words[1] = com.listen();
             times[3] = Machine.timer().getTime();
+            words[1] = com.listen();
         }
     });
     listener2.setName("L2");
@@ -159,7 +160,7 @@ public class Communicator {
     
     Lib.assertTrue(words[0] == 4, "Didn't listen back spoken word."); 
     Lib.assertTrue(words[1] == 7, "Didn't listen back spoken word.");
-    Lib.assertTrue(times[0] < times[2], "speak returned before listen.");
-    Lib.assertTrue(times[1] < times[3], "speak returned before listen.");
-}
+    Lib.assertTrue(times[0] > times[2], "speak() returned before listen() called.");
+    Lib.assertTrue(times[1] > times[3], "speak() returned before listen() called.");
+  }
 }
