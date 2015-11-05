@@ -1,2 +1,2 @@
-# CSE120_Project1
-Project1 for CSE120
+# CSE120
+All Projects for CSE120
