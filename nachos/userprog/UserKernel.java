@@ -21,6 +21,7 @@ public class UserKernel extends ThreadedKernel {
 	 */
 	public void initialize(String[] args) {
 		super.initialize(args);
+    pageTableLock = new Lock();
 
 		console = new SynchConsole(Machine.console());
 
@@ -108,9 +109,15 @@ public class UserKernel extends ThreadedKernel {
 		super.terminate();
 	}
 
+
 	/** Globally accessible reference to the synchronized console. */
 	public static SynchConsole console;
 
 	// dummy variables to make javac smarter
 	private static Coff dummy1 = null;
+
+  public static boolean[] pageStatus = 
+    new boolean[Machine.processor().getNumPhysPages()];
+
+  public static Lock pageTableLock = null;
 }

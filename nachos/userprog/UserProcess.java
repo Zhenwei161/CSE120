@@ -24,11 +24,25 @@ public class UserProcess {
 	 */
 	public UserProcess() {
 		int numPhysPages = Machine.processor().getNumPhysPages();
-		pageTable = new TranslationEntry[numPhysPages];
-		for (int i = 0; i < numPhysPages; i++)
-			pageTable[i] = new TranslationEntry(i, i, true, false, false, false);
+		pageTable = new TranslationEntry[8];
+		for (int i = 0; i < 8; i++)
+    {
+      UserKernel.pageTableLock.acquire();
+      for(int j = 0; j < numPhysPages; j++)
+      {
+        if(UserKernel.pageStatus[j] == false)
+        {
+			    pageTable[i] = new TranslationEntry(i, j, true, false, false, false);
+          UserKernel.pageStatus[j] = true;
+          break;
+        }
+      }
+      UserKernel.pageTableLock.release();
+    }
     fdTable[0] = UserKernel.console.openForReading();
     fdTable[1] = UserKernel.console.openForWriting();
+    System.out.println("test");
+
 	}
 
 	/**
@@ -137,9 +151,39 @@ public class UserProcess {
 		if (vaddr < 0 || vaddr >= memory.length)
 			return 0;
 
-		int amount = Math.min(length, memory.length - vaddr);
-		System.arraycopy(memory, vaddr, data, offset, amount);
+    int startingVirtualPage = vaddr / pageSize;
+    int startingVirtualOffset = vaddr % pageSize;
+    int endOfFirstPage = pageSize - startingVirtualOffset;
 
+
+    int startingPhysicalPage = pageTable[startingVirtualPage].ppn;
+    int startingPhysicalAddress = startingPhysicalPage * pageSize 
+                                    + startingVirtualOffset;
+
+    
+		int amount = Math.min(length, endOfFirstPage);
+    System.arraycopy(memory, startingPhysicalAddress, data, offset, amount);
+    int bytesLeft = length - amount;
+    int currVirtualPage = startingVirtualPage + 1;
+    while(bytesLeft > 0)
+    {
+      int currPhysicalPage = pageTable[currVirtualPage].ppn;
+      int currPhysicalAddress = currPhysicalPage * pageSize;
+      if(bytesLeft < pageSize)
+      {
+        System.arraycopy(memory, currPhysicalAddress, data, offset + amount, 
+                           bytesLeft);
+        amount += bytesLeft;
+        bytesLeft = 0;
+      }
+      else
+      {
+        System.arraycopy(memory, currPhysicalAddress, data, offset + amount,
+                           pageSize);
+        amount += pageSize;
+        bytesLeft -= pageSize;
+      }
+    }
 		return amount;
 	}
 
@@ -179,10 +223,45 @@ public class UserProcess {
 		if (vaddr < 0 || vaddr >= memory.length)
 			return 0;
 
+    int startingVirtualPage = vaddr / pageSize;
+    int startingVirtualOffset = vaddr % pageSize;
+    int endOfFirstPage = pageSize - startingVirtualOffset;
+
+
+    int startingPhysicalPage = pageTable[startingVirtualPage].ppn;
+    int startingPhysicalAddress = startingPhysicalPage * pageSize 
+                                    + startingVirtualOffset;
+
+    
+		int amount = Math.min(length, endOfFirstPage);
+    System.arraycopy(data, offset, memory, startingPhysicalAddress, amount);
+    int bytesLeft = length - amount;
+    int currVirtualPage = startingVirtualPage + 1;
+    while(bytesLeft > 0)
+    {
+      int currPhysicalPage = pageTable[currVirtualPage].ppn;
+      int currPhysicalAddress = currPhysicalPage * pageSize;
+      if(bytesLeft < pageSize)
+      {
+        System.arraycopy(data, offset + amount, memory, currPhysicalAddress,
+                           bytesLeft);
+        amount += bytesLeft;
+        bytesLeft = 0;
+      }
+      else
+      {
+        System.arraycopy(data, offset + amount, memory, currPhysicalAddress,
+                           pageSize);
+        amount += pageSize;
+        bytesLeft -= pageSize;
+      }
+    }
+		return amount;
+/*
 		int amount = Math.min(length, memory.length - vaddr);
 		System.arraycopy(data, offset, memory, vaddr, amount);
 
-		return amount;
+		return amount;*/
 	}
 
 	/**
@@ -483,47 +562,94 @@ public class UserProcess {
 
   private int handleRead(int fd, int bufferPointer, int count)
   {
-    if (fd > 15)
+    if (fd > 15 || fd < 0)
+      return -1;
+    if (count < 0)
+      return -1;
+    if(bufferPointer > numPages * pageSize || bufferPointer < 0)
+      return -1;
+    if(bufferPointer + count > numPages * pageSize)
       return -1;
     OpenFile fileToRead = fdTable[fd];
+    int buffCurPointer = bufferPointer;
     if(fileToRead == null)
     {
       return -1;
     }
-    byte[] readBytes = new byte[count];
-    int bytesRead = fileToRead.read(readBytes, fdPositions[fd], count);
+    int loops = (count / 1024);
+    int totalBytesRead = 0;
+    for(int i = 0; i < loops; i++)
+    {
+      byte[] readBytes = new byte[1024];
+      int bytesRead = fileToRead.read(readBytes, 0, 1024);
+      if(bytesRead == -1)
+        return -1;
+      writeVirtualMemory(buffCurPointer, readBytes);
+      buffCurPointer += bytesRead;
+      totalBytesRead += bytesRead;
+    }
+    int remainingBytes = (count % 1024);
+    byte[] readBytes = new byte[remainingBytes];
+
+    int bytesRead = fileToRead.read(readBytes, 0, remainingBytes);
     if(bytesRead == -1)
       return -1;
-    if(fd > 1)
-      fdPositions[fd] += bytesRead;
-    writeVirtualMemory(bufferPointer, readBytes);
-    return bytesRead;
+    writeVirtualMemory(buffCurPointer, readBytes);
+    buffCurPointer += bytesRead;
+    totalBytesRead += bytesRead;
+    
+    return totalBytesRead;
 
   }
 
   private int handleWrite(int fd, int bufferPointer, int count)
   {
-    if (fd > 15)
+    if (fd > 15 || fd < 0)
+      return -1;
+    if (count < 0)
+      return -1;
+    if(bufferPointer > numPages * pageSize || bufferPointer < 0)
+      return -1;
+    if(bufferPointer + count > numPages * pageSize)
       return -1;
     OpenFile fileToWrite = fdTable[fd];
+    int buffCurPointer = bufferPointer;
     if(fileToWrite == null)
     {
       return -1;
     }
+    int loops = (count / 1024);
+    int totalBytesWriten = 0;
+    for(int i = 0; i < loops; i++)
+    {
+      byte[] bytesToWrite = new byte[1024];
 
-    byte[] bytesToWrite = new byte[count];
+      readVirtualMemory(buffCurPointer, bytesToWrite);
 
-    readVirtualMemory(bufferPointer, bytesToWrite);
+      int bytesWriten = fileToWrite.write(bytesToWrite, 0, 1024);
+      if(bytesWriten == -1)
+      {
+        return -1;
+      }
+      buffCurPointer += bytesWriten;
+      totalBytesWriten += bytesWriten;
+    }
+    
+    int remainingBytes = (count % 1024);
+    byte[] bytesToWrite = new byte[remainingBytes];
 
-    int bytesWriten = fileToWrite.write(bytesToWrite, fdPositions[fd], count);
+    readVirtualMemory(buffCurPointer, bytesToWrite);
+
+    int bytesWriten = fileToWrite.write(bytesToWrite, 0, 
+                                         remainingBytes);
     if(bytesWriten == -1)
     {
       return -1;
     }
-    if(fd > 1)
-      fdPositions[fd] += bytesWriten;
+    buffCurPointer += bytesWriten;
+    totalBytesWriten += bytesWriten;
 
-    return bytesWriten;
+    return totalBytesWriten;
 
   }
 
@@ -560,6 +686,7 @@ public class UserProcess {
 	 */
 	public void handleException(int cause) {
 		Processor processor = Machine.processor();
+    System.out.println(cause);
 
 		switch (cause) {
 		case Processor.exceptionSyscall:
@@ -601,5 +728,4 @@ public class UserProcess {
   
   private OpenFile[] fdTable = new OpenFile[16];
 
-  private int[] fdPositions = new int[16];
 }
