@@ -422,8 +422,10 @@ public class UserProcess {
       return handleRead(a0, a1, a2);
     case syscallWrite:
       return handleWrite(a0, a1, a2);
-      
-
+    case syscallClose:
+      return handleClose(a0);      
+    case syscallUnlink:
+      return handleUnlink(a0);
 		default:
 			Lib.debug(dbgProcess, "Unknown syscall " + syscall);
 			Lib.assertNotReached("Unknown system call!");
@@ -481,6 +483,8 @@ public class UserProcess {
 
   private int handleRead(int fd, int bufferPointer, int count)
   {
+    if (fd > 15)
+      return -1;
     OpenFile fileToRead = fdTable[fd];
     if(fileToRead == null)
     {
@@ -499,6 +503,8 @@ public class UserProcess {
 
   private int handleWrite(int fd, int bufferPointer, int count)
   {
+    if (fd > 15)
+      return -1;
     OpenFile fileToWrite = fdTable[fd];
     if(fileToWrite == null)
     {
@@ -520,6 +526,31 @@ public class UserProcess {
     return bytesWriten;
 
   }
+
+  private int handleClose(int fd) 
+  {
+    if (fd > 15) 
+      return -1;
+    OpenFile fileToClose = fdTable[fd];
+    if (fileToClose == null) 
+      return -1;
+    fdTable[fd] = null;
+    fileToClose.close(); 
+    return 0;
+
+  }
+
+  private int handleUnlink(int namePointer)
+  {
+    String fileName = readVirtualMemoryString(namePointer, 256);
+    if (ThreadedKernel.fileSystem.remove(fileName))
+      return 0;
+    return -1;
+      
+  }
+
+  
+
 	/**
 	 * Handle a user exception. Called by <tt>UserKernel.exceptionHandler()</tt>
 	 * . The <i>cause</i> argument identifies which exception occurred; see the
