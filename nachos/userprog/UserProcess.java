@@ -27,6 +27,8 @@ public class UserProcess {
 		pageTable = new TranslationEntry[numPhysPages];
 		for (int i = 0; i < numPhysPages; i++)
 			pageTable[i] = new TranslationEntry(i, i, true, false, false, false);
+    fdTable[0] = UserKernel.console.openForReading();
+    fdTable[1] = UserKernel.console.openForWriting();
 	}
 
 	/**
@@ -108,8 +110,7 @@ public class UserProcess {
 	 * @param data the array where the data will be stored.
 	 * @return the number of bytes successfully transferred.
 	 */
-	public int readVirtualMemory(int vaddr, byte[] data) {
-		return readVirtualMemory(vaddr, data, 0, data.length);
+	public int readVirtualMemory(int vaddr, byte[] data) { return readVirtualMemory(vaddr, data, 0, data.length);
 	}
 
 	/**
@@ -413,6 +414,15 @@ public class UserProcess {
 		switch (syscall) {
 		case syscallHalt:
 			return handleHalt();
+    case syscallCreate:
+      return handleCreate(a0);
+    case syscallOpen:
+      return handleOpen(a0);
+    case syscallRead:
+      return handleRead(a0, a1, a2);
+    case syscallWrite:
+      return handleWrite(a0, a1, a2);
+      
 
 		default:
 			Lib.debug(dbgProcess, "Unknown syscall " + syscall);
@@ -421,6 +431,95 @@ public class UserProcess {
 		return 0;
 	}
 
+  private int handleCreate(int pointer)
+  {
+    String fileName = readVirtualMemoryString(pointer, 256);
+    OpenFile file = ThreadedKernel.fileSystem.open(fileName, true);
+    if(file == null)
+    {
+      return -1;
+    }
+    int i = 0;
+    for(i = 0; i < 16; i++)
+    {
+      if(fdTable[i] == null)
+      {
+        fdTable[i] = file;
+        break;
+      }
+    }
+    if(i == 16)
+    {
+      return -1;
+    }
+    return i;
+  }
+
+  private int handleOpen(int pointer)
+  {
+    String fileName = readVirtualMemoryString(pointer, 256);
+    OpenFile file = ThreadedKernel.fileSystem.open(fileName, false);
+    if(file == null)
+    {
+      return -1;
+    }
+    int i = 0;
+    for(i = 0; i < 16; i++)
+    {
+      if(fdTable[i] == null)
+      {
+        fdTable[i] = file;
+        break;
+      }
+    }
+    if(i == 16)
+    {
+      return -1;
+    }
+    return i;
+  }
+
+  private int handleRead(int fd, int bufferPointer, int count)
+  {
+    OpenFile fileToRead = fdTable[fd];
+    if(fileToRead == null)
+    {
+      return -1;
+    }
+    byte[] readBytes = new byte[count];
+    int bytesRead = fileToRead.read(readBytes, fdPositions[fd], count);
+    if(bytesRead == -1)
+      return -1;
+    if(fd > 1)
+      fdPositions[fd] += bytesRead;
+    writeVirtualMemory(bufferPointer, readBytes);
+    return bytesRead;
+
+  }
+
+  private int handleWrite(int fd, int bufferPointer, int count)
+  {
+    OpenFile fileToWrite = fdTable[fd];
+    if(fileToWrite == null)
+    {
+      return -1;
+    }
+
+    byte[] bytesToWrite = new byte[count];
+
+    readVirtualMemory(bufferPointer, bytesToWrite);
+
+    int bytesWriten = fileToWrite.write(bytesToWrite, fdPositions[fd], count);
+    if(bytesWriten == -1)
+    {
+      return -1;
+    }
+    if(fd > 1)
+      fdPositions[fd] += bytesWriten;
+
+    return bytesWriten;
+
+  }
 	/**
 	 * Handle a user exception. Called by <tt>UserKernel.exceptionHandler()</tt>
 	 * . The <i>cause</i> argument identifies which exception occurred; see the
@@ -468,4 +567,8 @@ public class UserProcess {
 	private static final int pageSize = Processor.pageSize;
 
 	private static final char dbgProcess = 'a';
+  
+  private OpenFile[] fdTable = new OpenFile[16];
+
+  private int[] fdPositions = new int[16];
 }
