@@ -3,6 +3,7 @@ package nachos.userprog;
 import nachos.machine.*;
 import nachos.threads.*;
 import nachos.userprog.*;
+import java.util.ArrayList;
 
 import java.io.EOFException;
 
@@ -71,7 +72,6 @@ public class UserProcess {
 		if (!load(name, args))
 			return false;
 
-    System.out.println(cause);
 		thread = new UThread(this);
     thread.setName(name).fork();
 
@@ -726,19 +726,19 @@ public class UserProcess {
   //Error Handleing
   private int handleExec(int filePointer, int argc, int argvPointer)
   {
-    UserProcess childProcess = new UserProcess()
+    UserProcess childProcess = new UserProcess();
     String fileName = readVirtualMemoryString(filePointer, 256);
     String[] arguments = new String[argc];
     int currPointer = argvPointer;
     for(int i = 0; i < argc; i++)
     {
       arguments[i] = readVirtualMemoryString(currPointer, 256);
-      currPointer += arguments[i].length;
+      currPointer += arguments[i].length();
     }
 
 
     childProcess.execute(fileName, arguments);
-    children.add(childProceess);
+    children.add(childProcess);
     return childProcess.pid;
   }
 
@@ -758,12 +758,28 @@ public class UserProcess {
       return -1;
     }
     process.thread.join();
-    return process.resultCode;
+    return process.processStatus;
   }
 
   private int handleExit(int status)
   {
-    thread.
+    thread.finish();
+    thread = null;
+    for (int i = 0; i < 16; i++) {
+      if (fdTable[i] != null) {
+        fdTable[i].close();
+      }
+    }
+    processStatus = status;
+    unloadSections();
+    UserKernel.numProcessesLock.acquire();
+    UserKernel.finishedProcesses++;
+    if (UserKernel.numProcesses == UserKernel.finishedProcesses) {
+      UserKernel.numProcessesLock.release();
+      Kernel.kernel.terminate();
+    }
+    UserKernel.numProcessesLock.release();
+    return 0;
   }
 
 
@@ -825,6 +841,7 @@ public class UserProcess {
 
   public UThread thread;
 
-  public int resultCode;
+
+  public int processStatus;
 
 }
