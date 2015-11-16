@@ -23,7 +23,7 @@ public class UserProcess {
 	 * Allocate a new process.
 	 */
 	public UserProcess() {
-		int numPhysPages = Machine.processor().getNumPhysPages();
+/*		int numPhysPages = Machine.processor().getNumPhysPages();
 		pageTable = new TranslationEntry[8];
 		for (int i = 0; i < 8; i++)
     {
@@ -38,10 +38,13 @@ public class UserProcess {
         }
       }
       UserKernel.pageTableLock.release();
-    }
+    }*/
+    UserKernel.numProcessesLock.acquire();
+    pid = UserKernel.numProcesses;
+    UserKernel.numProcesses++;
+    UserKernel.numProcessesLock.release();
     fdTable[0] = UserKernel.console.openForReading();
     fdTable[1] = UserKernel.console.openForWriting();
-    System.out.println("test");
 
 	}
 
@@ -68,7 +71,9 @@ public class UserProcess {
 		if (!load(name, args))
 			return false;
 
-		new UThread(this).setName(name).fork();
+    System.out.println(cause);
+		thread = new UThread(this);
+    thread.setName(name).fork();
 
 		return true;
 	}
@@ -227,7 +232,11 @@ public class UserProcess {
     int startingVirtualOffset = vaddr % pageSize;
     int endOfFirstPage = pageSize - startingVirtualOffset;
 
-
+    if(pageTable[startingVirtualPage].readOnly)
+    {
+      return 0;
+    }
+    
     int startingPhysicalPage = pageTable[startingVirtualPage].ppn;
     int startingPhysicalAddress = startingPhysicalPage * pageSize 
                                     + startingVirtualOffset;
@@ -239,6 +248,10 @@ public class UserProcess {
     int currVirtualPage = startingVirtualPage + 1;
     while(bytesLeft > 0)
     {
+      if(pageTable[currVirtualPage].readOnly)
+      {
+        return amount;
+      }
       int currPhysicalPage = pageTable[currVirtualPage].ppn;
       int currPhysicalAddress = currPhysicalPage * pageSize;
       if(bytesLeft < pageSize)
@@ -364,7 +377,28 @@ public class UserProcess {
 			Lib.debug(dbgProcess, "\tinsufficient physical memory");
 			return false;
 		}
-
+		pageTable = new TranslationEntry[numPages];
+		for (int i = 0; i < numPages; i++)
+    {
+      for(int j = 0; j < Machine.processor().getNumPhysPages(); j++)
+      {
+        UserKernel.pageTableLock.acquire();
+        if(UserKernel.pageStatus[j] == false)
+        {
+			    pageTable[i] = new TranslationEntry(i, j, true, false, false, false);
+          UserKernel.pageStatus[j] = true;
+          UserKernel.pageTableLock.release();
+          break;
+        }
+        UserKernel.pageTableLock.release();
+        if(j == Machine.processor().getNumPhysPages() - 1)
+        {
+          coff.close();
+	  	  	Lib.debug(dbgProcess, "\tinsufficient physical memory");
+		   	  return false;
+        }
+      }
+    }
 		// load sections
 		for (int s = 0; s < coff.getNumSections(); s++) {
 			CoffSection section = coff.getSection(s);
@@ -376,7 +410,11 @@ public class UserProcess {
 				int vpn = section.getFirstVPN() + i;
 
 				// for now, just assume virtual addresses=physical addresses
-				section.loadPage(i, vpn);
+        if(section.isReadOnly())
+        {
+          pageTable[vpn].readOnly = true;
+        }
+				section.loadPage(i, pageTable[vpn].ppn);
 			}
 		}
 
@@ -387,6 +425,12 @@ public class UserProcess {
 	 * Release any resources allocated by <tt>loadSections()</tt>.
 	 */
 	protected void unloadSections() {
+    for(int i = 0; i < pageTable.length; i++)
+    {
+      UserKernel.pageTableLock.acquire();
+      UserKernel.pageStatus[pageTable[i].ppn] = false;
+      UserKernel.pageTableLock.release();
+    }
 	}
 
 	/**
@@ -505,6 +549,10 @@ public class UserProcess {
       return handleClose(a0);      
     case syscallUnlink:
       return handleUnlink(a0);
+    case syscallExec:
+      return handleExec(a0, a1, a2);
+    case syscallJoin:
+      return handleJoin(a0, a1);
 		default:
 			Lib.debug(dbgProcess, "Unknown syscall " + syscall);
 			Lib.assertNotReached("Unknown system call!");
@@ -675,6 +723,50 @@ public class UserProcess {
       
   }
 
+  //Error Handleing
+  private int handleExec(int filePointer, int argc, int argvPointer)
+  {
+    UserProcess childProcess = new UserProcess()
+    String fileName = readVirtualMemoryString(filePointer, 256);
+    String[] arguments = new String[argc];
+    int currPointer = argvPointer;
+    for(int i = 0; i < argc; i++)
+    {
+      arguments[i] = readVirtualMemoryString(currPointer, 256);
+      currPointer += arguments[i].length;
+    }
+
+
+    childProcess.execute(fileName, arguments);
+    children.add(childProceess);
+    return childProcess.pid;
+  }
+
+  private int handleJoin(int pid, int statusPointer)
+  {
+    UserProcess process = null;
+    for(UserProcess i : children)
+    {
+      if(i.pid == pid)
+      {
+        process = i;
+        break;
+      }
+    }
+    if(process == null)
+    {
+      return -1;
+    }
+    process.thread.join();
+    return process.resultCode;
+  }
+
+  private int handleExit(int status)
+  {
+    thread.
+  }
+
+
   
 
 	/**
@@ -686,7 +778,6 @@ public class UserProcess {
 	 */
 	public void handleException(int cause) {
 		Processor processor = Machine.processor();
-    System.out.println(cause);
 
 		switch (cause) {
 		case Processor.exceptionSyscall:
@@ -727,5 +818,13 @@ public class UserProcess {
 	private static final char dbgProcess = 'a';
   
   private OpenFile[] fdTable = new OpenFile[16];
+
+  public int pid;
+
+  private ArrayList<UserProcess> children = new ArrayList<UserProcess>();
+
+  public UThread thread;
+
+  public int resultCode;
 
 }

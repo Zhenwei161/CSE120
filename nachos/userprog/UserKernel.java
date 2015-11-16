@@ -22,6 +22,7 @@ public class UserKernel extends ThreadedKernel {
 	public void initialize(String[] args) {
 		super.initialize(args);
     pageTableLock = new Lock();
+    numProcessesLock = new Lock();
 
 		console = new SynchConsole(Machine.console());
 
@@ -120,4 +121,8 @@ public class UserKernel extends ThreadedKernel {
     new boolean[Machine.processor().getNumPhysPages()];
 
   public static Lock pageTableLock = null;
+
+  public static int numProcesses = 0;
+
+  public static Lock numProcessesLock = null;
 }
