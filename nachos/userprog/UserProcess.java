@@ -553,6 +553,8 @@ public class UserProcess {
       return handleExec(a0, a1, a2);
     case syscallJoin:
       return handleJoin(a0, a1);
+    case syscallExit:
+      return handleExit(a0);
 		default:
 			Lib.debug(dbgProcess, "Unknown syscall " + syscall);
 			Lib.assertNotReached("Unknown system call!");
@@ -763,8 +765,6 @@ public class UserProcess {
 
   private int handleExit(int status)
   {
-    thread.finish();
-    thread = null;
     for (int i = 0; i < 16; i++) {
       if (fdTable[i] != null) {
         fdTable[i].close();
@@ -779,6 +779,8 @@ public class UserProcess {
       Kernel.kernel.terminate();
     }
     UserKernel.numProcessesLock.release();
+    thread.finish();
+    thread = null;
     return 0;
   }
 
