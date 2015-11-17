@@ -4,6 +4,7 @@ import nachos.machine.*;
 import nachos.threads.*;
 import nachos.userprog.*;
 import java.util.ArrayList;
+import java.nio.ByteBuffer;
 
 import java.io.EOFException;
 
@@ -536,7 +537,9 @@ public class UserProcess {
 	public int handleSyscall(int syscall, int a0, int a1, int a2, int a3) {
 		switch (syscall) {
 		case syscallHalt:
-			return handleHalt();
+      if(pid == 0)
+			  return handleHalt();
+      return -1;
     case syscallCreate:
       return handleCreate(a0);
     case syscallOpen:
@@ -718,6 +721,8 @@ public class UserProcess {
 
   private int handleUnlink(int namePointer)
   {
+    if(namePointer < 0 || namePointer > numPages * pageSize )
+      return -1;
     String fileName = readVirtualMemoryString(namePointer, 256);
     if (ThreadedKernel.fileSystem.remove(fileName))
       return 0;
@@ -728,6 +733,12 @@ public class UserProcess {
   //Error Handleing
   private int handleExec(int filePointer, int argc, int argvPointer)
   {
+    if(filePointer < 0 || filePointer > numPages * pageSize )
+      return -1;
+    if(argc < 0)
+      return -1;
+    if(argvPointer < 0 || argvPointer > numPages * pageSize )
+      return -1;
     UserProcess childProcess = new UserProcess();
     String fileName = readVirtualMemoryString(filePointer, 256);
     String[] arguments = new String[argc];
@@ -746,6 +757,8 @@ public class UserProcess {
 
   private int handleJoin(int pid, int statusPointer)
   {
+    if(statusPointer < 0 || statusPointer > numPages * pageSize )
+      return -1;
     UserProcess process = null;
     for(UserProcess i : children)
     {
@@ -760,7 +773,23 @@ public class UserProcess {
       return -1;
     }
     process.thread.join();
-    return process.processStatus;
+    writeVirtualMemory(statusPointer, intToByteArray(process.processStatus));
+    if(process.processStatus >= 0)
+    {
+      return 1;
+    }
+    else
+    {
+      return 0;
+    }
+  }
+
+  private byte[] intToByteArray(int value) {
+    return new byte[] {
+            (byte)(value),
+            (byte)(value >>> 8),
+            (byte)(value >>> 16),
+            (byte)(value >>> 24)};
   }
 
   private int handleExit(int status)
