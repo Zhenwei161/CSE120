@@ -21,6 +21,8 @@ public class VMKernel extends UserKernel {
 	 */
 	public void initialize(String[] args) {
 		super.initialize(args);
+    swapFile = ThreadedKernel.fileSystem.open(".Nachos.swp", true);
+
 	}
 
 	/**
@@ -42,10 +44,14 @@ public class VMKernel extends UserKernel {
 	 */
 	public void terminate() {
 		super.terminate();
+    swapFile.close();
+    ThreadedKernel.fileSystem.remove(".Nachos.swp");
 	}
 
 	// dummy variables to make javac smarter
 	private static VMProcess dummy1 = null;
 
 	private static final char dbgVM = 'v';
+
+  public OpenFile swapFile;
 }

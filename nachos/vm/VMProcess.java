@@ -4,6 +4,7 @@ import nachos.machine.*;
 import nachos.threads.*;
 import nachos.userprog.*;
 import nachos.vm.*;
+import java.util.LinkedList;
 
 /**
  * A <tt>UserProcess</tt> that supports demand-paging.
@@ -116,48 +117,101 @@ public class VMProcess extends UserProcess {
       System.out.println("Allocating VPN: " + t.vpn);
       if(UserKernel.freePages.size() > 0)
       {
-	      int ppn = ((Integer)UserKernel.freePages.removeFirst()).intValue();
-        t.ppn = ppn;
+  	    int ppn = ((Integer)UserKernel.freePages.removeFirst()).intValue();
         t.valid = true;
-
-        boolean isCoffSection = false;
-        for (int s=0; s<coff.getNumSections(); s++) {
-          if(isCoffSection)
-          {
-            break;
-          }
-          CoffSection section = coff.getSection(s);
-          if(section.getFirstVPN() > t.vpn)
-          {
-            continue;
-          }
-          for (int i=0; i<section.getLength(); i++) {
-            int svpn = section.getFirstVPN()+i;
-            if(svpn == t.vpn)
+        if(!t.dirty)
+        {
+          t.ppn = ppn;
+  
+          boolean isCoffSection = false;
+          for (int s=0; s<coff.getNumSections(); s++) {
+            if(isCoffSection)
             {
-              section.loadPage(i, pinVirtualPage(t.vpn, false));
-              System.out.println("VPN \"" + t.vpn + "\" is a COFF section");
-              System.out.println("COFF section loaded into VPN \"" + t.vpn + "\" PPN \"" + t.ppn + "\"");
-              isCoffSection = true;
               break;
             }
+            CoffSection section = coff.getSection(s);
+            if(section.getFirstVPN() > t.vpn)
+            {
+              continue;
+            }
+            for (int i=0; i<section.getLength(); i++) {
+              int svpn = section.getFirstVPN()+i;
+              if(svpn == t.vpn)
+              {
+                section.loadPage(i, pinVirtualPage(t.vpn, false));
+                System.out.println("VPN \"" + t.vpn + "\" is a COFF section");
+                System.out.println("COFF section loaded into VPN \"" + t.vpn + "\" PPN \"" + t.ppn + "\"");
+                isCoffSection = true;
+                break;
+              }
+            }
+          }
+
+          if(!isCoffSection)
+          {
+            System.out.println("VPN \"" + t.vpn + "\" is NOT a COFF section");
+            System.out.println("PPN \"" + t.ppn + "\" Zero'd Out");
+            byte[] data = new byte[Processor.pageSize];
+            //writeVirtualMemory(t.vpn, data, 0, Processor.pageSize);
+            byte[] memory = Machine.processor().getMemory();
+            System.arraycopy(data, 0, memory, 
+                  t.ppn*Processor.pageSize, Processor.pageSize);
           }
         }
-
-        if(!isCoffSection)
+        else //Dirty
         {
-          System.out.println("VPN \"" + t.vpn + "\" is NOT a COFF section");
-          System.out.println("PPN \"" + t.ppn + "\" Zero'd Out");
-          byte[] data = new byte[Processor.pageSize];
-          //writeVirtualMemory(t.vpn, data, 0, Processor.pageSize);
+          int spn = t.ppn;
+          byte[] data = new byte[pageSize];
           byte[] memory = Machine.processor().getMemory();
-          System.arraycopy(data, 0, memory, 
-                t.ppn*Processor.pageSize, Processor.pageSize);
+          OpenFile swap = ThreadedKernel.fileSystem.open(".Nachos.swp", false);
+          swap.read(spn * pageSize, memory, ppn * pageSize, pageSize);
+          t.ppn = ppn;
+          freeSwapPages.set(spn, true);
         }
       }
       else
       {
-        //SwapFile
+        syncTLB();
+        //Clock Algorithm
+        while(pageTable[victim].used)
+        {
+          pageTable[victim].used = false;
+          victim = (victim + 1) % pageTable.length;
+        }
+
+        int evict = victim;
+        victim = (victim + 1) % pageTable.length;
+
+        //Swap Files
+        if(pageTable[evict].dirty)
+        {
+          OpenFile swap = ThreadedKernel.fileSystem.open(".Nachos.swp", false);
+          int spn = 0;
+          for(spn = 0; spn < freeSwapPages.size(); spn++)
+          {
+            if(freeSwapPages.get(spn))
+            {
+              break;
+            }
+          }
+          if(spn == freeSwapPages.size())
+          {
+            freeSwapPages.add(false);
+          }
+          else
+          {
+            freeSwapPages.set(spn, false);
+          }
+          pageTable[evict].ppn = spn;
+          byte[] memory = Machine.processor().getMemory();
+          swap.write(spn * pageSize, memory, 
+                       pageTable[evict].ppn * pageSize, pageSize);
+          pageTable[evict].valid = false;
+          Machine.processor().readTLBEntry(evict).valid = false;
+          UserKernel.freePages.add(pageTable[evict].ppn);
+          return;
+        }
+
       }
     }
     for(int i = 0; i < Machine.processor().getTLBSize(); i++)
@@ -177,9 +231,27 @@ public class VMProcess extends UserProcess {
 
   }
 
+  private void syncTLB()
+  {
+    for(int i = 0; i < Machine.processor().getTLBSize(); i++)
+    {
+      
+      TranslationEntry tE = Machine.processor().readTLBEntry(i);
+      if(tE.valid)
+      {
+        pageTable[tE.vpn].dirty = tE.dirty;
+        pageTable[tE.vpn].used = tE.used;
+      }
+    }
+  }
+
 	private static final int pageSize = Processor.pageSize;
 
 	private static final char dbgProcess = 'a';
 
 	private static final char dbgVM = 'v';
+
+  private int victim = 0;
+
+  private static LinkedList<Boolean> freeSwapPages = new LinkedList<Boolean>();
 }
