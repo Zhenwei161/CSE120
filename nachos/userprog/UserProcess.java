@@ -781,7 +781,7 @@ public class UserProcess {
     private int argc, argv;
     
     private UserProcess parentProcess = null;
-    private int processID;
+    protected int processID;
     
     private HashSet childProcesses = new HashSet();
     private HashMap exitStatusTable = new HashMap();

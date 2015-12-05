@@ -15,6 +15,7 @@ public class VMProcess extends UserProcess {
 	 */
 	public VMProcess() {
 		super();
+    IPT = new IPTEntry[Machine.processor().getNumPhysPages()];
 	}
 
 	/**
@@ -118,10 +119,13 @@ public class VMProcess extends UserProcess {
       if(UserKernel.freePages.size() > 0)
       {
   	    int ppn = ((Integer)UserKernel.freePages.removeFirst()).intValue();
-        t.valid = true;
+        t.valid = true;    
         if(!t.dirty)
         {
           t.ppn = ppn;
+          IPT[ppn] = new IPTEntry();
+          IPT[ppn].processID = processID;
+          IPT[ppn].tE = t;
   
           boolean isCoffSection = false;
           for (int s=0; s<coff.getNumSections(); s++) {
@@ -160,6 +164,7 @@ public class VMProcess extends UserProcess {
         }
         else //Dirty
         {
+          System.out.println("VPN \"" + t.vpn + "\" has been swapped out, swaping into PPN \"" + ppn + "\"");
           int spn = t.ppn;
           byte[] data = new byte[pageSize];
           byte[] memory = Machine.processor().getMemory();
@@ -167,24 +172,29 @@ public class VMProcess extends UserProcess {
           swap.read(spn * pageSize, memory, ppn * pageSize, pageSize);
           t.ppn = ppn;
           freeSwapPages.set(spn, true);
+          IPT[ppn] = new IPTEntry();
+          IPT[ppn].processID = processID;
+          IPT[ppn].tE = t;
         }
       }
       else
       {
         syncTLB();
         //Clock Algorithm
-        while(pageTable[victim].used)
+        while(IPT[victim] == null || IPT[victim].tE.used)
         {
-          pageTable[victim].used = false;
-          victim = (victim + 1) % pageTable.length;
+          if(IPT[victim] != null)
+            IPT[victim].tE.used = false;
+          victim = (victim + 1) % Machine.processor().getNumPhysPages();
         }
+        int evict = IPT[victim].tE.vpn;
+        victim = (victim + 1) % Machine.processor().getNumPhysPages();
 
-        int evict = victim;
-        victim = (victim + 1) % pageTable.length;
-
+        System.out.println("Not enough pysical memory, evicting VPN \"" + evict + "\""); 
         //Swap Files
         if(pageTable[evict].dirty)
         {
+          System.out.println("VPN \"" + evict + "\" is dirty, swapping out.");
           OpenFile swap = ThreadedKernel.fileSystem.open(".Nachos.swp", false);
           int spn = 0;
           for(spn = 0; spn < freeSwapPages.size(); spn++)
@@ -211,7 +221,13 @@ public class VMProcess extends UserProcess {
           UserKernel.freePages.add(pageTable[evict].ppn);
           return;
         }
-
+        else
+        {
+          pageTable[evict].valid = false;
+          Machine.processor().readTLBEntry(evict).valid = false;
+          UserKernel.freePages.add(pageTable[evict].ppn);
+          return;
+        }
       }
     }
     for(int i = 0; i < Machine.processor().getTLBSize(); i++)
@@ -228,6 +244,7 @@ public class VMProcess extends UserProcess {
     TranslationEntry tE = Machine.processor().readTLBEntry(evictedEntry);
     pageTable[tE.vpn] = tE;
     Machine.processor().writeTLBEntry(evictedEntry, t);
+    System.out.println("Evicted TLBEntry " + evictedEntry + " randomly");
 
   }
 
@@ -254,4 +271,15 @@ public class VMProcess extends UserProcess {
   private int victim = 0;
 
   private static LinkedList<Boolean> freeSwapPages = new LinkedList<Boolean>();
+
+  private IPTEntry[] IPT;
+
+  private class IPTEntry
+  {
+    public int processID;
+    public TranslationEntry tE;
+    public int pinCount;
+  }
+
 }
+
