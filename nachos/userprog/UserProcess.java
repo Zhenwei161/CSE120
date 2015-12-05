@@ -452,6 +452,7 @@ public class UserProcess {
 	
 	UserKernel.processLock.acquire();
 
+  System.out.println(status);
 	if (parentProcess != null) {
 	    Integer value = abnormalTermination ? null : new Integer(status);
 	    parentProcess.exitStatusTable.put(new Integer(processID), value);

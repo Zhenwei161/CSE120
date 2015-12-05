@@ -28,7 +28,8 @@ public class VMProcess extends UserProcess {
       TranslationEntry tE = Machine.processor().readTLBEntry(i);
       if(tE.valid)
       {
-        pageTable[tE.vpn] = tE;
+        pageTable[tE.vpn].dirty = tE.dirty;
+        pageTable[tE.vpn].used = tE.used;
       }
       tE.valid = false;
     }
@@ -111,6 +112,7 @@ public class VMProcess extends UserProcess {
     TranslationEntry t = pageTable[vpn];
     if(!t.valid)
     {
+      System.out.println("Allocating VPN: " + t.vpn);
       if(UserKernel.freePages.size() > 0)
       {
 	      int ppn = ((Integer)UserKernel.freePages.removeFirst()).intValue();
@@ -118,6 +120,8 @@ public class VMProcess extends UserProcess {
         t.valid = true;
         if(t.readOnly)
         {
+          System.out.println("VPN \"" + t.vpn + "\" is a COFF section");
+
 	        for (int s=0; s<coff.getNumSections(); s++) {
 	          CoffSection section = coff.getSection(s);
             if(section.getFirstVPN() > t.vpn)
@@ -128,8 +132,9 @@ public class VMProcess extends UserProcess {
 		          int svpn = section.getFirstVPN()+i;
               if(svpn == t.vpn)
               {
-		            section.loadPage(i, pinVirtualPage(svpn, false));
-                break;
+		            section.loadPage(i, t.ppn);
+                System.out.println("COFF section loaded into VPN \"" + t.vpn + "\"");
+                return;
               }
 	          }
  	        }
@@ -137,8 +142,12 @@ public class VMProcess extends UserProcess {
         }
         else
         {
+          System.out.println("VPN \"" + t.vpn + "\" is NOT a COFF section");
           byte[] data = new byte[Processor.pageSize];
-          writeVirtualMemory(t.vpn, data, 0, Processor.pageSize);
+          //writeVirtualMemory(t.vpn, data, 0, Processor.pageSize);
+          byte[] memory = Machine.processor().getMemory();
+          System.arraycopy(data, 0, memory, 
+                t.ppn*Processor.pageSize, Processor.pageSize);
         }
       }
       else
