@@ -110,6 +110,7 @@ public class VMProcess extends UserProcess {
     int vaddr = Machine.processor().readRegister(Processor.regBadVAddr);
     int vpn = Processor.pageFromAddress(vaddr);
     TranslationEntry t = pageTable[vpn];
+    System.out.println("TLBMiss: VPN:" + vpn);
     if(!t.valid)
     {
       System.out.println("Allocating VPN: " + t.vpn);
@@ -118,31 +119,35 @@ public class VMProcess extends UserProcess {
 	      int ppn = ((Integer)UserKernel.freePages.removeFirst()).intValue();
         t.ppn = ppn;
         t.valid = true;
-        if(t.readOnly)
-        {
-          System.out.println("VPN \"" + t.vpn + "\" is a COFF section");
 
-	        for (int s=0; s<coff.getNumSections(); s++) {
-	          CoffSection section = coff.getSection(s);
-            if(section.getFirstVPN() > t.vpn)
+        boolean isCoffSection = false;
+        for (int s=0; s<coff.getNumSections(); s++) {
+          if(isCoffSection)
+          {
+            break;
+          }
+          CoffSection section = coff.getSection(s);
+          if(section.getFirstVPN() > t.vpn)
+          {
+            continue;
+          }
+          for (int i=0; i<section.getLength(); i++) {
+            int svpn = section.getFirstVPN()+i;
+            if(svpn == t.vpn)
             {
-              continue;
+              section.loadPage(i, pinVirtualPage(t.vpn, false));
+              System.out.println("VPN \"" + t.vpn + "\" is a COFF section");
+              System.out.println("COFF section loaded into VPN \"" + t.vpn + "\" PPN \"" + t.ppn + "\"");
+              isCoffSection = true;
+              break;
             }
-	          for (int i=0; i<section.getLength(); i++) {
-		          int svpn = section.getFirstVPN()+i;
-              if(svpn == t.vpn)
-              {
-		            section.loadPage(i, t.ppn);
-                System.out.println("COFF section loaded into VPN \"" + t.vpn + "\"");
-                return;
-              }
-	          }
- 	        }
-
+          }
         }
-        else
+
+        if(!isCoffSection)
         {
           System.out.println("VPN \"" + t.vpn + "\" is NOT a COFF section");
+          System.out.println("PPN \"" + t.ppn + "\" Zero'd Out");
           byte[] data = new byte[Processor.pageSize];
           //writeVirtualMemory(t.vpn, data, 0, Processor.pageSize);
           byte[] memory = Machine.processor().getMemory();
@@ -160,6 +165,7 @@ public class VMProcess extends UserProcess {
       TranslationEntry tE = Machine.processor().readTLBEntry(i);
       if(!tE.valid)
       {
+        System.out.println("Evicted TLBEntry " + i);
         Machine.processor().writeTLBEntry(i, t);
         return;
       }
