@@ -15,7 +15,6 @@ public class VMProcess extends UserProcess {
 	 */
 	public VMProcess() {
 		super();
-    IPT = new IPTEntry[Machine.processor().getNumPhysPages()];
 	}
 
 	/**
@@ -23,7 +22,6 @@ public class VMProcess extends UserProcess {
 	 * Called by <tt>UThread.saveState()</tt>.
 	 */
 	public void saveState() {
-    
     for(int i = 0; i < Machine.processor().getTLBSize(); i++)
     {
       
@@ -34,7 +32,10 @@ public class VMProcess extends UserProcess {
         pageTable[tE.vpn].used = tE.used;
       }
       tE.valid = false;
+      Machine.processor().writeTLBEntry(i, tE);
+      savedState[i] = tE.vpn;
     }
+
 	}
 
 	/**
@@ -42,6 +43,21 @@ public class VMProcess extends UserProcess {
 	 * <tt>UThread.restoreState()</tt>.
 	 */
 	public void restoreState() {
+    /*for(int i = 0; i < Machine.processor().getTLBSize(); i++)
+    {
+      
+      TranslationEntry tE = Machine.processor().readTLBEntry(i);
+      tE.valid = false;
+      Machine.processor().writeTLBEntry(i, tE);
+    }
+    for(int i = 0; i < Machine.processor().getTLBSize(); i++)
+    {
+      if(pageTable[savedState[i]].valid)
+      {
+        Machine.processor().writeTLBEntry(i, pageTable[savedState[i]]);
+      }
+    }*/
+
 	}
 
 	/**
@@ -84,7 +100,12 @@ public class VMProcess extends UserProcess {
 	 * Release any resources allocated by <tt>loadSections()</tt>.
 	 */
 	protected void unloadSections() {
-		super.unloadSections();
+    for(int vpn = 0; vpn < pageTable.length; vpn++)
+    {
+      if(pageTable[vpn].valid)
+        UserKernel.freePages.add(new Integer(pageTable[vpn].ppn));
+    }
+
 	}
 
 	/**
@@ -107,15 +128,78 @@ public class VMProcess extends UserProcess {
 		}
 	}
 
+  protected int pinVirtualPage(int vpn, boolean isUserWrite)
+  {
+    int ppn = super.pinVirtualPage(vpn, isUserWrite);
+    if(ppn >= 0)
+    {
+      if(isUserWrite)
+      {
+        IPT[ppn].pinCount = true;
+      }
+    }
+    else
+    {
+      if (vpn < 0 || vpn >= pageTable.length)
+	      return -1;
+
+      if(!pageTable[vpn].valid)
+      {
+        pageTableLock.acquire();
+        allocatePage(vpn);
+        pageTableLock.release();
+      }  
+      ppn = super.pinVirtualPage(vpn, isUserWrite);
+      if(isUserWrite)
+      {
+        IPT[ppn].pinCount = true;
+      }
+    }
+    return ppn;
+  }
+
+  protected void unpinVirtualPage(int vpn)
+  {
+    int ppn = super.pinVirtualPage(vpn, false);
+    if(ppn >= 0)
+    {
+      IPT[ppn].pinCount = false;
+      unpinnedPageLock.acquire();
+      unpinnedPage.wake();
+      unpinnedPageLock.release();
+    }
+  }
+
   public void handleTLBMiss()
   {
     int vaddr = Machine.processor().readRegister(Processor.regBadVAddr);
-    int vpn = Processor.pageFromAddress(vaddr);
+    int vpn =  Processor.pageFromAddress(vaddr);
+    pageTableLock.acquire();
+    allocatePage(vpn);
+    pageTableLock.release();
+  }
+
+  private void syncTLB()
+  {
+    for(int i = 0; i < Machine.processor().getTLBSize(); i++)
+    {
+      
+      TranslationEntry tE = Machine.processor().readTLBEntry(i);
+      if(tE.valid)
+      {
+        pageTable[tE.vpn].dirty = tE.dirty;
+        pageTable[tE.vpn].used = tE.used;
+      }
+    }
+  }
+
+  private void allocatePage(int vpn)
+  {
+//    System.out.println("TLBMiss: VPN:" + vpn + " of Process " + processID);
     TranslationEntry t = pageTable[vpn];
-    System.out.println("TLBMiss: VPN:" + vpn);
     if(!t.valid)
     {
-      System.out.println("Allocating VPN: " + t.vpn);
+//      System.out.println("Allocating VPN: " + t.vpn);
       if(UserKernel.freePages.size() > 0)
       {
   	    int ppn = ((Integer)UserKernel.freePages.removeFirst()).intValue();
@@ -124,7 +208,7 @@ public class VMProcess extends UserProcess {
         {
           t.ppn = ppn;
           IPT[ppn] = new IPTEntry();
-          IPT[ppn].processID = processID;
+          IPT[ppn].process = this;
           IPT[ppn].tE = t;
   
           boolean isCoffSection = false;
@@ -142,9 +226,11 @@ public class VMProcess extends UserProcess {
               int svpn = section.getFirstVPN()+i;
               if(svpn == t.vpn)
               {
+                pageTableLock.release();
                 section.loadPage(i, pinVirtualPage(t.vpn, false));
-                System.out.println("VPN \"" + t.vpn + "\" is a COFF section");
-                System.out.println("COFF section loaded into VPN \"" + t.vpn + "\" PPN \"" + t.ppn + "\"");
+                pageTableLock.acquire();
+//                System.out.println("VPN \"" + t.vpn + "\" is a COFF section");
+//                System.out.println("COFF section loaded into VPN \"" + t.vpn + "\" PPN \"" + t.ppn + "\"");
                 isCoffSection = true;
                 break;
               }
@@ -153,8 +239,8 @@ public class VMProcess extends UserProcess {
 
           if(!isCoffSection)
           {
-            System.out.println("VPN \"" + t.vpn + "\" is NOT a COFF section");
-            System.out.println("PPN \"" + t.ppn + "\" Zero'd Out");
+//            System.out.println("VPN \"" + t.vpn + "\" is NOT a COFF section");
+//            System.out.println("PPN \"" + t.ppn + "\" Zero'd Out");
             byte[] data = new byte[Processor.pageSize];
             //writeVirtualMemory(t.vpn, data, 0, Processor.pageSize);
             byte[] memory = Machine.processor().getMemory();
@@ -164,44 +250,53 @@ public class VMProcess extends UserProcess {
         }
         else //Dirty
         {
-          System.out.println("VPN \"" + t.vpn + "\" has been swapped out, swaping into PPN \"" + ppn + "\"");
+//          System.out.println("VPN \"" + t.vpn + "\" has been swapped out, swaping into PPN \"" + ppn + "\"");
           int spn = t.ppn;
           byte[] data = new byte[pageSize];
           byte[] memory = Machine.processor().getMemory();
-          OpenFile swap = ThreadedKernel.fileSystem.open("Nachos.swp", false);
+          OpenFile swap = ThreadedKernel.fileSystem.open(".Nachos.swp", false);
           swap.read(spn * pageSize, memory, ppn * pageSize, pageSize);
           swap.close();
           t.ppn = ppn;
+          System.out.println(spn);
           freeSwapPages.set(spn, true);
           IPT[ppn] = new IPTEntry();
-          IPT[ppn].processID = processID;
+          IPT[ppn].process = this;
           IPT[ppn].tE = t;
-          System.out.println("SPN \"" + spn + "\" has been swapped in.");
+//          System.out.println("SPN \"" + spn + "\" has been swapped in.");
         }
       }
       else
       {
         syncTLB();
+
         //Clock Algorithm
-        while(IPT[victim] == null || IPT[victim].tE.used)
+        unpinnedPageLock.acquire();
+        int numPinnedPages = 0;
+        while(IPT[victim] == null || IPT[victim].tE.used || 
+          IPT[victim].pinCount)
         {
-          if(IPT[victim].tE.vpn == 0)
-          {
-            victim = (victim + 1) % Machine.processor().getNumPhysPages();
-          }
           if(IPT[victim] != null)
             IPT[victim].tE.used = false;
+          if(IPT[victim].pinCount)
+            numPinnedPages++;
+          if(numPinnedPages == IPT.length)
+            unpinnedPage.sleep();
+//          System.out.println("This Process is " + this.processID + " and the IPT's process is " + IPT[victim].processID);
           victim = (victim + 1) % Machine.processor().getNumPhysPages();
         }
+        unpinnedPageLock.release();
         int evict = IPT[victim].tE.vpn;
+        VMProcess evictedOwner = IPT[victim].process;
+        int evictedPPN = victim;
         victim = (victim + 1) % Machine.processor().getNumPhysPages();
 
-        System.out.println("Not enough pysical memory, evicting VPN \"" + evict + "\""); 
+//        System.out.println("Not enough pysical memory, evicting VPN \"" + evict + "\""); 
         //Swap Files
-        if(pageTable[evict].dirty)
+        if(evictedOwner.isDirty(evict))
         {
-          System.out.println("VPN \"" + evict + "\" is dirty, swapping out.");
-          OpenFile swap = ThreadedKernel.fileSystem.open("Nachos.swp", false);
+//          System.out.println("VPN \"" + evict + "\" is dirty, swapping out.");
+          OpenFile swap = ThreadedKernel.fileSystem.open(".Nachos.swp", false);
           int spn = 0;
           for(spn = 0; spn < freeSwapPages.size(); spn++)
           {
@@ -218,41 +313,58 @@ public class VMProcess extends UserProcess {
           {
             freeSwapPages.set(spn, false);
           }
-          UserKernel.freePages.add(pageTable[evict].ppn);
+          UserKernel.freePages.add(evictedPPN);
           byte[] memory = Machine.processor().getMemory();
           swap.write(spn * pageSize, memory, 
-                       pageTable[evict].ppn * pageSize, pageSize);
+                       evictedPPN * pageSize, pageSize);
           swap.close();
-          pageTable[evict].ppn = spn;
-          pageTable[evict].valid = false;
-          for(int i = 0; i < Machine.processor().getTLBSize(); i++)
+          if(evictedOwner.processID != this.processID)
           {
-            TranslationEntry tE = Machine.processor().readTLBEntry(i);
-            if(tE.vpn == evict)
+            evictedOwner.evict(evict, spn);
+          }
+          else
+          {
+            pageTable[evict].ppn = spn;
+            pageTable[evict].valid = false;
+          
+            for(int i = 0; i < Machine.processor().getTLBSize(); i++)
             {
-              System.out.println("TLBEntry " + i + " invalid");
-              tE.valid = false;
-              Machine.processor().writeTLBEntry(i, tE);
+              TranslationEntry tE = Machine.processor().readTLBEntry(i);
+              if(tE.vpn == evict)
+              {
+//                System.out.println("TLBEntry " + i + " invalid");
+                tE.valid = false;
+                Machine.processor().writeTLBEntry(i, tE);
+              }
             }
           }
-          System.out.println("VPN \"" + evict + "\" swapped out to SPN \"" + spn + "\".");
+//          System.out.println("VPN \"" + evict + "\" of Process " + this.processID + " swapped out to SPN \"" + spn + "\".");
           //Machine.processor().readTLBEntry(evict).valid = false;
-          return;
+          allocatePage(vpn);
         }
         else
         {
-          pageTable[evict].valid = false;
-          UserKernel.freePages.add(pageTable[evict].ppn);
+          if(evictedOwner.processID != this.processID)
+          {
+            System.out.println("Evicted VPN " + evict + " of Process " + this.processID);
+            evictedOwner.evict(evict);
+          }
+          else
+          {
+            pageTable[evict].valid = false;
+          }
+          UserKernel.freePages.add(evictedPPN);
           for(int i = 0; i < Machine.processor().getTLBSize(); i++)
           {
             TranslationEntry tE = Machine.processor().readTLBEntry(i);
             if(tE.vpn == evict)
             {
-              System.out.println("TLBEntry " + i + " invalid");
+//              System.out.println("TLBEntry " + i + " invalid");
               tE.valid = false;
               Machine.processor().writeTLBEntry(i, tE);
             }
           }
+          allocatePage(vpn);
           return;
         }
       }
@@ -264,6 +376,7 @@ public class VMProcess extends UserProcess {
       {
         System.out.println("Evicted TLBEntry " + i);
         Machine.processor().writeTLBEntry(i, t);
+        //System.out.println(t.valid);
         return;
       }
     }
@@ -277,18 +390,20 @@ public class VMProcess extends UserProcess {
 
   }
 
-  private void syncTLB()
+  public void evict(int vpn, int spn)
   {
-    for(int i = 0; i < Machine.processor().getTLBSize(); i++)
-    {
-      
-      TranslationEntry tE = Machine.processor().readTLBEntry(i);
-      if(tE.valid)
-      {
-        pageTable[tE.vpn].dirty = tE.dirty;
-        pageTable[tE.vpn].used = tE.used;
-      }
-    }
+    pageTable[vpn].ppn = spn;
+    pageTable[vpn].valid = false;
+  }
+
+  public void evict(int vpn)
+  {
+    pageTable[vpn].valid = false;
+  }
+
+  public boolean isDirty(int vpn)
+  {
+    return pageTable[vpn].dirty;
   }
 
 	private static final int pageSize = Processor.pageSize;
@@ -301,14 +416,20 @@ public class VMProcess extends UserProcess {
 
   private static LinkedList<Boolean> freeSwapPages = new LinkedList<Boolean>();
 
-  private IPTEntry[] IPT;
+  private static IPTEntry[] IPT = new IPTEntry[Machine.processor().getNumPhysPages()];
 
   private class IPTEntry
   {
-    public int processID;
+    public VMProcess process;
     public TranslationEntry tE;
-    public int pinCount;
+    public boolean pinCount;
   }
+  public static Lock unpinnedPageLock = new Lock();
+  public static Condition unpinnedPage = new Condition(unpinnedPageLock);
+
+  public static Lock pageTableLock = new Lock();
+
+  private int[] savedState = new int[Machine.processor().getTLBSize()];
 
 }
 

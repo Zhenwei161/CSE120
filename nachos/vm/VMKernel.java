@@ -21,7 +21,7 @@ public class VMKernel extends UserKernel {
 	 */
 	public void initialize(String[] args) {
 		super.initialize(args);
-    swapFile = ThreadedKernel.fileSystem.open("Nachos.swp", true);
+    swapFile = ThreadedKernel.fileSystem.open(".Nachos.swp", true);
 
 	}
 
@@ -54,4 +54,7 @@ public class VMKernel extends UserKernel {
 	private static final char dbgVM = 'v';
 
   public OpenFile swapFile;
+
+
 }
+
