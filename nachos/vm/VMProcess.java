@@ -33,7 +33,7 @@ public class VMProcess extends UserProcess {
       }
       tE.valid = false;
       Machine.processor().writeTLBEntry(i, tE);
-      savedState[i] = tE.vpn;
+      //savedState[i] = tE.vpn;
     }
 
 	}
@@ -57,7 +57,6 @@ public class VMProcess extends UserProcess {
         Machine.processor().writeTLBEntry(i, pageTable[savedState[i]]);
       }
     }*/
-
 	}
 
 	/**
@@ -103,7 +102,10 @@ public class VMProcess extends UserProcess {
     for(int vpn = 0; vpn < pageTable.length; vpn++)
     {
       if(pageTable[vpn].valid)
+      {
         UserKernel.freePages.add(new Integer(pageTable[vpn].ppn));
+        //IPT[pageTable[vpn].ppn] = null;
+      }
     }
 
 	}
@@ -145,9 +147,7 @@ public class VMProcess extends UserProcess {
 
       if(!pageTable[vpn].valid)
       {
-        pageTableLock.acquire();
         allocatePage(vpn);
-        pageTableLock.release();
       }  
       ppn = super.pinVirtualPage(vpn, isUserWrite);
       if(isUserWrite)
@@ -174,9 +174,7 @@ public class VMProcess extends UserProcess {
   {
     int vaddr = Machine.processor().readRegister(Processor.regBadVAddr);
     int vpn =  Processor.pageFromAddress(vaddr);
-    pageTableLock.acquire();
     allocatePage(vpn);
-    pageTableLock.release();
   }
 
   private void syncTLB()
@@ -195,11 +193,12 @@ public class VMProcess extends UserProcess {
 
   private void allocatePage(int vpn)
   {
-//    System.out.println("TLBMiss: VPN:" + vpn + " of Process " + processID);
+    //System.out.println("TLBMiss: VPN:" + vpn + " of Process " + processID);
     TranslationEntry t = pageTable[vpn];
     if(!t.valid)
     {
-//      System.out.println("Allocating VPN: " + t.vpn);
+      //System.out.println("Allocating VPN: " + t.vpn);
+      lock.acquire();
       if(UserKernel.freePages.size() > 0)
       {
   	    int ppn = ((Integer)UserKernel.freePages.removeFirst()).intValue();
@@ -226,11 +225,9 @@ public class VMProcess extends UserProcess {
               int svpn = section.getFirstVPN()+i;
               if(svpn == t.vpn)
               {
-                pageTableLock.release();
                 section.loadPage(i, pinVirtualPage(t.vpn, false));
-                pageTableLock.acquire();
 //                System.out.println("VPN \"" + t.vpn + "\" is a COFF section");
-//                System.out.println("COFF section loaded into VPN \"" + t.vpn + "\" PPN \"" + t.ppn + "\"");
+                //System.out.println("COFF section loaded into VPN \"" + t.vpn + "\" PPN \"" + t.ppn + "\"");
                 isCoffSection = true;
                 break;
               }
@@ -240,7 +237,7 @@ public class VMProcess extends UserProcess {
           if(!isCoffSection)
           {
 //            System.out.println("VPN \"" + t.vpn + "\" is NOT a COFF section");
-//            System.out.println("PPN \"" + t.ppn + "\" Zero'd Out");
+            //System.out.println("PPN \"" + t.ppn + "\" Zero'd Out");
             byte[] data = new byte[Processor.pageSize];
             //writeVirtualMemory(t.vpn, data, 0, Processor.pageSize);
             byte[] memory = Machine.processor().getMemory();
@@ -258,7 +255,7 @@ public class VMProcess extends UserProcess {
           swap.read(spn * pageSize, memory, ppn * pageSize, pageSize);
           swap.close();
           t.ppn = ppn;
-          System.out.println(spn);
+          //System.out.println(spn);
           freeSwapPages.set(spn, true);
           IPT[ppn] = new IPTEntry();
           IPT[ppn].process = this;
@@ -277,25 +274,32 @@ public class VMProcess extends UserProcess {
           IPT[victim].pinCount)
         {
           if(IPT[victim] != null)
+          {
             IPT[victim].tE.used = false;
+            //System.out.println("PPN " + victim + " is used.");
+          }
           if(IPT[victim].pinCount)
+          {
             numPinnedPages++;
+            //System.out.println("PPN " + victim + " is pinned.");
+          }
           if(numPinnedPages == IPT.length)
             unpinnedPage.sleep();
 //          System.out.println("This Process is " + this.processID + " and the IPT's process is " + IPT[victim].processID);
           victim = (victim + 1) % Machine.processor().getNumPhysPages();
         }
+        //System.out.println("PPN " + victim + " will be evicted.");
         unpinnedPageLock.release();
         int evict = IPT[victim].tE.vpn;
         VMProcess evictedOwner = IPT[victim].process;
         int evictedPPN = victim;
         victim = (victim + 1) % Machine.processor().getNumPhysPages();
 
-//        System.out.println("Not enough pysical memory, evicting VPN \"" + evict + "\""); 
+        //System.out.println("Not enough pysical memory, evicting VPN \"" + evict + "\" of process " + evictedOwner.processID); 
         //Swap Files
         if(evictedOwner.isDirty(evict))
         {
-//          System.out.println("VPN \"" + evict + "\" is dirty, swapping out.");
+          //System.out.println("VPN \"" + evict + "\" is dirty, swapping out.");
           OpenFile swap = ThreadedKernel.fileSystem.open(".Nachos.swp", false);
           int spn = 0;
           for(spn = 0; spn < freeSwapPages.size(); spn++)
@@ -326,27 +330,29 @@ public class VMProcess extends UserProcess {
           {
             pageTable[evict].ppn = spn;
             pageTable[evict].valid = false;
-          
-            for(int i = 0; i < Machine.processor().getTLBSize(); i++)
+          } 
+          for(int i = 0; i < Machine.processor().getTLBSize(); i++)
+          {
+            TranslationEntry tE = Machine.processor().readTLBEntry(i);
+            if(tE.vpn == evict && tE.ppn == evictedPPN)
             {
-              TranslationEntry tE = Machine.processor().readTLBEntry(i);
-              if(tE.vpn == evict)
-              {
-//                System.out.println("TLBEntry " + i + " invalid");
-                tE.valid = false;
-                Machine.processor().writeTLBEntry(i, tE);
-              }
+//              System.out.println("TLBEntry " + i + " invalid");
+              tE.valid = false;
+              Machine.processor().writeTLBEntry(i, tE);
             }
           }
+          lock.release();
+          
 //          System.out.println("VPN \"" + evict + "\" of Process " + this.processID + " swapped out to SPN \"" + spn + "\".");
           //Machine.processor().readTLBEntry(evict).valid = false;
           allocatePage(vpn);
+          return;
         }
         else
         {
           if(evictedOwner.processID != this.processID)
           {
-            System.out.println("Evicted VPN " + evict + " of Process " + this.processID);
+            //System.out.println("Evicted VPN " + evict + " of Process " + this.processID);
             evictedOwner.evict(evict);
           }
           else
@@ -357,24 +363,26 @@ public class VMProcess extends UserProcess {
           for(int i = 0; i < Machine.processor().getTLBSize(); i++)
           {
             TranslationEntry tE = Machine.processor().readTLBEntry(i);
-            if(tE.vpn == evict)
+            if(tE.vpn == evict && tE.ppn == evictedPPN)
             {
 //              System.out.println("TLBEntry " + i + " invalid");
               tE.valid = false;
               Machine.processor().writeTLBEntry(i, tE);
             }
           }
+          lock.release();
           allocatePage(vpn);
           return;
         }
       }
+      lock.release();
     }
     for(int i = 0; i < Machine.processor().getTLBSize(); i++)
     {
       TranslationEntry tE = Machine.processor().readTLBEntry(i);
       if(!tE.valid)
       {
-        System.out.println("Evicted TLBEntry " + i);
+        //System.out.println("Evicted TLBEntry " + i);
         Machine.processor().writeTLBEntry(i, t);
         //System.out.println(t.valid);
         return;
@@ -385,8 +393,8 @@ public class VMProcess extends UserProcess {
     TranslationEntry tE = Machine.processor().readTLBEntry(evictedEntry);
     pageTable[tE.vpn] = tE;
     Machine.processor().writeTLBEntry(evictedEntry, t);
-    System.out.println("Evicted TLBEntry " + evictedEntry + " randomly");
-    System.out.println("TE entered is VPN \"" + t.vpn + "\" PPN \"" + t.ppn + "\"");
+    //System.out.println("Evicted TLBEntry " + evictedEntry + " randomly");
+    //System.out.println("TE entered is VPN \"" + t.vpn + "\" PPN \"" + t.ppn + "\"");
 
   }
 
@@ -412,7 +420,7 @@ public class VMProcess extends UserProcess {
 
 	private static final char dbgVM = 'v';
 
-  private int victim = 0;
+  private static int victim = 0;
 
   private static LinkedList<Boolean> freeSwapPages = new LinkedList<Boolean>();
 
@@ -427,7 +435,7 @@ public class VMProcess extends UserProcess {
   public static Lock unpinnedPageLock = new Lock();
   public static Condition unpinnedPage = new Condition(unpinnedPageLock);
 
-  public static Lock pageTableLock = new Lock();
+  public static Lock lock = new Lock();
 
   private int[] savedState = new int[Machine.processor().getTLBSize()];
 

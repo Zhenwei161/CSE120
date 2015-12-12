@@ -163,7 +163,9 @@ public class UserProcess {
 
 	    int ppn = pinVirtualPage(vpn, false);
 	    if (ppn == -1)
+      {
 		break;
+      }
 
 	    System.arraycopy(memory, ppn*pageSize + off, data, offset,
 			     transfer);
@@ -219,6 +221,7 @@ public class UserProcess {
 	    int off = Processor.offsetFromAddress(vaddr);
 
 	    int transfer = Math.min(length, pageSize-off);
+      //System.out.println(vpn);
 
 	    int ppn = pinVirtualPage(vpn, true);
 	    if (ppn == -1)
@@ -243,7 +246,9 @@ public class UserProcess {
 
 	TranslationEntry entry = pageTable[vpn];
 	if (!entry.valid || entry.vpn != vpn)
+  {
 	    return -1;
+  }
 
 	if (isUserWrite) {
 	    if (entry.readOnly)
@@ -399,7 +404,9 @@ public class UserProcess {
      */
     protected void unloadSections() {
         for (int vpn=0; vpn<pageTable.length; vpn++)
-	    UserKernel.freePages.add(new Integer(pageTable[vpn].ppn));
+        {
+	        UserKernel.freePages.add(new Integer(pageTable[vpn].ppn));
+        }
     }    
 
     /**
